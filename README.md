@@ -26,7 +26,7 @@ routes:
 ```
 2. Start the Gateway:
 ```sh
-go run main.go
+go run ./cmd/proxy
 ```
 
 3. Access your app:
