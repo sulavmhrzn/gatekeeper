@@ -1,0 +1,7 @@
+server:
+  port: 8000
+  secret_key: "my-super-secret-key"
+
+backend:
+  url: "http://localhost:9000"
+
