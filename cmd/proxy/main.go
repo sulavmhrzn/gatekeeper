@@ -55,8 +55,11 @@ func main() {
 		w.Write([]byte("Gatekeeper Error: Backend is unreachable"))
 	}
 	var handler http.Handler = proxy
-	handler = middleware.LoggingMiddleware(
-		middleware.AuthMiddleware(handler, cfg.Server.SecretKey),
+
+	handler = middleware.RecoveryMiddleware(
+		middleware.LoggingMiddleware(
+			middleware.AuthMiddleware(handler, cfg.Server.SecretKey),
+		),
 	)
 
 	log.Printf("Gatekeeper listening on :%d... (Proxying to :%s)", cfg.Server.Port, cfg.Backend.URL)
