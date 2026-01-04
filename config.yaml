@@ -2,6 +2,8 @@ server:
   port: 8000
   secret_key: "my-super-secret-key"
 
-backend:
-  url: "http://localhost:9000"
-
+routes:
+  - path: "/api"
+    target: "http://localhost:9000"
+  - path: "/auth"
+    target: "http://localhost:7000"

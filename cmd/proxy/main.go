@@ -5,19 +5,22 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 
 	"github.com/spf13/viper"
 	"github.com/sulavmhrzn/gatekeeper/internal/middleware"
 )
 
+type Route struct {
+	Path   string `mapstructure:"path"`
+	Target string `mapstructure:"target"`
+}
 type Config struct {
 	Server struct {
 		Port      int    `mapstructure:"port"`
 		SecretKey string `mapstructure:"secret_key"`
 	} `mapstructure:"server"`
-	Backend struct {
-		URL string `mapstructure:"url"`
-	} `mapstructure:"backend"`
+	Routes []Route `mapstructure:"routes"`
 }
 
 func LoadConfig() (Config, error) {
@@ -42,27 +45,47 @@ func main() {
 		log.Fatalf("Could not load config: %v", err)
 	}
 
-	origin, err := url.Parse(cfg.Backend.URL)
-	if err != nil {
-		log.Fatal("Invalid origin Url:", err)
+	proxies := make(map[string]*httputil.ReverseProxy)
+
+	for _, route := range cfg.Routes {
+		targetURL, _ := url.Parse(route.Target)
+		p := httputil.NewSingleHostReverseProxy(targetURL)
+		routePath := route.Path
+		originDirector := p.Director
+		p.Director = func(r *http.Request) {
+			originDirector(r)
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, routePath)
+			if r.URL.Path == "" {
+				r.URL.Path = "/"
+			}
+		}
+		p.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			log.Printf("Backend (%s) error: %v", targetURL, err)
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte("Gatekeeper Error: Backend is unreachable"))
+		}
+		proxies[route.Path] = p
+		log.Printf("Route mapped: %s -> %s", route.Path, route.Target)
 	}
 
-	proxy := httputil.NewSingleHostReverseProxy(origin)
+	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for path, proxy := range proxies {
 
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		log.Printf("Backend error: %v", err)
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte("Gatekeeper Error: Backend is unreachable"))
-	}
-	var handler http.Handler = proxy
+			if len(r.URL.Path) >= len(path) && r.URL.Path[:len(path)] == path {
+				proxy.ServeHTTP(w, r)
+				return
+			}
+		}
+		http.Error(w, "Route not found", http.StatusNotFound)
+	})
 
-	handler = middleware.RecoveryMiddleware(
+	handler := middleware.RecoveryMiddleware(
 		middleware.LoggingMiddleware(
-			middleware.AuthMiddleware(handler, cfg.Server.SecretKey),
+			middleware.AuthMiddleware(router, cfg.Server.SecretKey),
 		),
 	)
 
-	log.Printf("Gatekeeper listening on :%d... (Proxying to :%s)", cfg.Server.Port, cfg.Backend.URL)
+	log.Printf("Gatekeeper listening on :%d...", cfg.Server.Port)
 	if err := http.ListenAndServe(":8000", handler); err != nil {
 		log.Fatal(err)
 	}
